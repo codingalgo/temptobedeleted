@@ -95,7 +95,6 @@ class RunTab:
 
     # --- Poll queues ---
     def _poll_queues(self):
-        # process UI log messages
         try:
             while True:
                 msg = self.ui_queue.get_nowait()
@@ -103,15 +102,12 @@ class RunTab:
         except queue.Empty:
             pass
 
-        # process lines from connection_tab
         if self.connection_tab and hasattr(self.connection_tab, "shared_queue"):
             try:
                 while True:
                     line = self.connection_tab.shared_queue.get_nowait()
-                    # add to history
                     with self.connection_tab.history_lock:
                         self.connection_tab.history.append(line)
-                    # show in GUI
                     self._append_log_to_text(f"[LIVE] {line}")
             except queue.Empty:
                 pass
@@ -149,10 +145,13 @@ class RunTab:
                 self.enqueue_log(f"[DEBUG] Starting command: {cmd.get('command_name','')} ({cmd.get('command','')})")
 
                 retries = int(cmd.get("retries", "1") or "1")
+                if retries < 1:
+                    self.enqueue_log(f"[DEBUG] retries value '{cmd.get('retries')}' adjusted to 1")
+                    retries = 1
+
                 final_result = "FAIL"
                 found_text = ""
 
-                # Insert row as "running" (yellow)
                 row_values = (
                     it, cmd.get("command_name",""), cmd.get("command",""),
                     cmd.get("expected",""), cmd.get("regex",""), cmd.get("negative",""),
@@ -167,24 +166,28 @@ class RunTab:
                         break
 
                     command = cmd.get("command", "")
-                    self.enqueue_log(f"[SEND] {command}")
+                    self.enqueue_log(f"[SEND] {command} (attempt {attempt+1}/{retries})")
                     try:
                         conn.serial_conn.write((command + "\r\n").encode())
                     except Exception as e:
                         self.enqueue_log(f"[ERROR] {e}")
                         continue
 
-                    # fresh snapshot
                     with conn.history_lock:
                         start_idx = len(conn.history)
 
                     timeout = float(cmd.get("wait_till", "1") or "1")
+                    if timeout < 0.1:
+                        self.enqueue_log(f"[DEBUG] wait_till={timeout} adjusted to 1.0s")
+                        timeout = 1.0
+
                     end_time = time.time() + timeout
                     lines = []
                     success = False
-                    self.enqueue_log(f"[DEBUG] Waiting up to {timeout:.1f}s for response...")
+                    self.enqueue_log(f"[DEBUG] Entering wait loop for {timeout:.1f}s (end={end_time:.2f})")
 
                     while time.time() < end_time and not self.stop_flag:
+                        self.enqueue_log(f"[DEBUG] Loop tick {time.time():.2f} < {end_time:.2f}")
                         with conn.history_lock:
                             new_lines = conn.history[start_idx:]
                         if new_lines:
@@ -199,7 +202,6 @@ class RunTab:
                             self.enqueue_log(f"[DEBUG] Checking response:\n{response}")
                             self.enqueue_log(f"[DEBUG] expected='{expected}', regex='{regex}', negative='{negative}'")
 
-                            # Default = FAIL unless proven PASS
                             if regex:
                                 try:
                                     if re.search(regex, response, re.MULTILINE):
@@ -222,13 +224,13 @@ class RunTab:
 
                             if success:
                                 final_result = "PASS"
-                                break  # ✅ break ONLY if true success
+                                break
                             else:
                                 self.enqueue_log("[DEBUG] No match yet, still waiting...")
 
                         time.sleep(0.05)
 
-                    # If loop ended without success → FAIL
+                    self.enqueue_log(f"[DEBUG] Exiting wait loop at {time.time():.2f}")
                     if not success:
                         final_result = "FAIL"
                         self.enqueue_log("[DEBUG] Timeout reached, marking FAIL")
@@ -236,7 +238,6 @@ class RunTab:
                     if final_result == "PASS":
                         break  # stop retrying
 
-                # Update row color + found message
                 new_values = (
                     it, cmd.get("command_name",""), cmd.get("command",""),
                     cmd.get("expected",""), cmd.get("regex",""), cmd.get("negative",""),
@@ -248,6 +249,8 @@ class RunTab:
 
                 self.enqueue_log(f"[{final_result}] {cmd.get('command_name','')} (Retries {retries})")
                 self.enqueue_log(f"[DEBUG] Finished command: {cmd.get('command_name','')} → {final_result}")
+                self.enqueue_log("[DEBUG] Moving to next command...")
+
                 self.results.append({"iteration": it, **cmd, "found": found_text, "result": final_result})
 
             self.enqueue_log(f"[DEBUG] Completed iteration {it}")
