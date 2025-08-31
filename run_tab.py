@@ -42,7 +42,7 @@ class RunTab:
             self.tree.column(c, width=120, stretch=True)
         self.tree.pack(fill="both", expand=True)
 
-        # Configure colors
+        # Configure row colors
         self.tree.tag_configure("running", background="#fff3cd")   # yellow
         self.tree.tag_configure("pass", background="#d4edda")      # green
         self.tree.tag_configure("fail", background="#f8d7da")      # red
@@ -158,7 +158,6 @@ class RunTab:
                 )
                 item_id = self.tree.insert("", "end", values=row_values, tags=("running",))
 
-                # try sending/retrying
                 for attempt in range(retries):
                     if self.stop_flag:
                         break
@@ -178,6 +177,8 @@ class RunTab:
                     timeout = float(cmd.get("wait_till", "1") or "1")
                     end_time = time.time() + timeout
                     lines = []
+                    success = False
+                    self.enqueue_log(f"[DEBUG] Waiting up to {timeout:.1f}s for response...")
 
                     while time.time() < end_time and not self.stop_flag:
                         with conn.history_lock:
@@ -187,32 +188,46 @@ class RunTab:
                             response = "\n".join(lines)
                             found_text = response.strip()
 
-                            # evaluate
                             expected = cmd.get("expected", "").strip()
                             regex = cmd.get("regex", "").strip()
                             negative = cmd.get("negative", "").strip()
 
-                            final_result = "FAIL"
+                            self.enqueue_log(f"[DEBUG] Checking response:\n{response}")
+                            self.enqueue_log(f"[DEBUG] expected='{expected}', regex='{regex}', negative='{negative}'")
+
+                            # Default = FAIL unless proven PASS
                             if regex:
                                 try:
                                     if re.search(regex, response, re.MULTILINE):
-                                        final_result = "PASS"
+                                        self.enqueue_log("[DEBUG] Regex matched → PASS")
+                                        success = True
                                 except re.error as e:
                                     self.enqueue_log(f"[ERROR] Invalid regex: {e}")
                             elif expected:
                                 if expected in response:
-                                    final_result = "PASS"
+                                    self.enqueue_log("[DEBUG] Expected string found → PASS")
+                                    success = True
                             else:
                                 if response:
-                                    final_result = "PASS"
+                                    self.enqueue_log("[DEBUG] No expected/regex, any response counts → PASS")
+                                    success = True
 
                             if negative and negative in response:
-                                final_result = "FAIL"
+                                self.enqueue_log("[DEBUG] Negative string found → FORCE FAIL")
+                                success = False
 
-                            if final_result == "PASS":
-                                break  # ✅ stop early
+                            if success:
+                                final_result = "PASS"
+                                break  # ✅ break ONLY if true success
+                            else:
+                                self.enqueue_log("[DEBUG] No match yet, still waiting...")
 
                         time.sleep(0.05)
+
+                    # If loop ended without success → FAIL
+                    if not success:
+                        final_result = "FAIL"
+                        self.enqueue_log("[DEBUG] Timeout reached, marking FAIL")
 
                     if final_result == "PASS":
                         break  # stop retrying
