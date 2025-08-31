@@ -43,6 +43,7 @@ class RunTab:
         self.tree.pack(fill="both", expand=True)
 
         # Configure row colors
+        self.tree.tag_configure("pending", background="#e2e3e5")   # gray
         self.tree.tag_configure("running", background="#fff3cd")   # yellow
         self.tree.tag_configure("pass", background="#d4edda")      # green
         self.tree.tag_configure("fail", background="#f8d7da")      # red
@@ -78,7 +79,6 @@ class RunTab:
             f.write(line)
 
     def enqueue_log(self, msg):
-        """Safe logging from background threads."""
         self.ui_queue.put(msg)
 
     def search_log(self):
@@ -126,140 +126,134 @@ class RunTab:
         for r in self.tree.get_children():
             self.tree.delete(r)
 
-        self.running = True
-        self.stop_flag = False
-        self.stop_button["state"] = "normal"
-        self.export_button["state"] = "disabled"
-
-        threading.Thread(target=self._run_loop, daemon=True).start()
-
-    def _run_loop(self):
-        conn = self.connection_tab
+        # preload all commands as pending (gray)
         for it in range(1, self.iterations.get() + 1):
-            self.enqueue_log(f"[DEBUG] Starting iteration {it}, {len(self.editor_tab.data)} commands to run")
-
             for cmd in list(self.editor_tab.data):
-                if self.stop_flag:
-                    break
-
-                self.enqueue_log(f"[DEBUG] Starting command: {cmd.get('command_name','')} ({cmd.get('command','')})")
-
-                retries = int(cmd.get("retries", "1") or "1")
-                if retries < 1:
-                    self.enqueue_log(f"[DEBUG] retries value '{cmd.get('retries')}' adjusted to 1")
-                    retries = 1
-
-                final_result = "FAIL"
-                found_text = ""
-
                 row_values = (
                     it, cmd.get("command_name",""), cmd.get("command",""),
                     cmd.get("expected",""), cmd.get("regex",""), cmd.get("negative",""),
                     cmd.get("wait_till",""), cmd.get("print_after",""),
                     cmd.get("print_ahead_chars",""), cmd.get("message",""),
-                    cmd.get("retries",""), "", "RUNNING"
+                    cmd.get("retries",""), "", "PENDING"
                 )
-                item_id = self.tree.insert("", "end", values=row_values, tags=("running",))
+                self.tree.insert("", "end", values=row_values, tags=("pending",))
 
-                for attempt in range(retries):
-                    if self.stop_flag:
-                        break
+        self.running = True
+        self.stop_flag = False
+        self.stop_button["state"] = "normal"
+        self.export_button["state"] = "disabled"  # reset disabled
 
-                    command = cmd.get("command", "")
-                    self.enqueue_log(f"[SEND] {command} (attempt {attempt+1}/{retries})")
-                    try:
-                        conn.serial_conn.write((command + "\r\n").encode())
-                    except Exception as e:
-                        self.enqueue_log(f"[ERROR] {e}")
-                        continue
+        threading.Thread(target=self._run_loop, daemon=True).start()
 
-                    with conn.history_lock:
-                        start_idx = len(conn.history)
+    def _run_loop(self):
+        conn = self.connection_tab
+        first_command_done = False
 
-                    timeout = float(cmd.get("wait_till", "1") or "1")
-                    if timeout < 0.1:
-                        self.enqueue_log(f"[DEBUG] wait_till={timeout} adjusted to 1.0s")
-                        timeout = 1.0
-
-                    end_time = time.time() + timeout
-                    lines = []
-                    success = False
-                    self.enqueue_log(f"[DEBUG] Entering wait loop for {timeout:.1f}s (end={end_time:.2f})")
-
-                    while time.time() < end_time and not self.stop_flag:
-                        self.enqueue_log(f"[DEBUG] Loop tick {time.time():.2f} < {end_time:.2f}")
-                        with conn.history_lock:
-                            new_lines = conn.history[start_idx:]
-                        if new_lines:
-                            lines = new_lines
-                            response = "\n".join(lines)
-                            found_text = response.strip()
-
-                            expected = cmd.get("expected", "").strip()
-                            regex = cmd.get("regex", "").strip()
-                            negative = cmd.get("negative", "").strip()
-
-                            self.enqueue_log(f"[DEBUG] Checking response:\n{response}")
-                            self.enqueue_log(f"[DEBUG] expected='{expected}', regex='{regex}', negative='{negative}'")
-
-                            if regex:
-                                try:
-                                    if re.search(regex, response, re.MULTILINE):
-                                        self.enqueue_log("[DEBUG] Regex matched → PASS")
-                                        success = True
-                                except re.error as e:
-                                    self.enqueue_log(f"[ERROR] Invalid regex: {e}")
-                            elif expected:
-                                if expected in response:
-                                    self.enqueue_log("[DEBUG] Expected string found → PASS")
-                                    success = True
-                            else:
-                                if response:
-                                    self.enqueue_log("[DEBUG] No expected/regex, any response counts → PASS")
-                                    success = True
-
-                            if negative and negative in response:
-                                self.enqueue_log("[DEBUG] Negative string found → FORCE FAIL")
-                                success = False
-
-                            if success:
-                                final_result = "PASS"
-                                break
-                            else:
-                                self.enqueue_log("[DEBUG] No match yet, still waiting...")
-
-                        time.sleep(0.05)
-
-                    self.enqueue_log(f"[DEBUG] Exiting wait loop at {time.time():.2f}")
-                    if not success:
-                        final_result = "FAIL"
-                        self.enqueue_log("[DEBUG] Timeout reached, marking FAIL")
-
-                    if final_result == "PASS":
-                        break  # stop retrying
-
-                new_values = (
-                    it, cmd.get("command_name",""), cmd.get("command",""),
-                    cmd.get("expected",""), cmd.get("regex",""), cmd.get("negative",""),
-                    cmd.get("wait_till",""), cmd.get("print_after",""),
-                    cmd.get("print_ahead_chars",""), cmd.get("message",""),
-                    cmd.get("retries",""), found_text, final_result
-                )
-                self.tree.item(item_id, values=new_values, tags=("pass" if final_result=="PASS" else "fail",))
-
-                self.enqueue_log(f"[{final_result}] {cmd.get('command_name','')} (Retries {retries})")
-                self.enqueue_log(f"[DEBUG] Finished command: {cmd.get('command_name','')} → {final_result}")
-                self.enqueue_log("[DEBUG] Moving to next command...")
-
-                self.results.append({"iteration": it, **cmd, "found": found_text, "result": final_result})
-
-            self.enqueue_log(f"[DEBUG] Completed iteration {it}")
+        # iterate through all rows in order
+        items = self.tree.get_children()
+        for idx, item_id in enumerate(items, 1):
             if self.stop_flag:
                 break
 
+            values = list(self.tree.item(item_id, "values"))
+            it = values[0]
+            cmd = {
+                "command_name": values[1],
+                "command": values[2],
+                "expected": values[3],
+                "regex": values[4],
+                "negative": values[5],
+                "wait_till": values[6],
+                "print_after": values[7],
+                "print_ahead_chars": values[8],
+                "message": values[9],
+                "retries": values[10],
+            }
+
+            self.enqueue_log(f"[DEBUG] Starting command: {cmd['command_name']} ({cmd['command']})")
+            self.tree.item(item_id, tags=("running",))
+            self.tree.set(item_id, "result", "RUNNING")
+
+            retries = int(cmd.get("retries", "1") or "1")
+            if retries < 1:
+                retries = 1
+
+            final_result = "FAIL"
+            found_text = ""
+
+            for attempt in range(retries):
+                if self.stop_flag:
+                    break
+
+                command = cmd.get("command", "")
+                self.enqueue_log(f"[SEND] {command} (attempt {attempt+1}/{retries})")
+                try:
+                    conn.serial_conn.write((command + "\r\n").encode())
+                except Exception as e:
+                    self.enqueue_log(f"[ERROR] {e}")
+                    continue
+
+                with conn.history_lock:
+                    start_idx = len(conn.history)
+
+                timeout = float(cmd.get("wait_till", "1") or "1")
+                if timeout < 0.1:
+                    timeout = 1.0
+
+                end_time = time.time() + timeout
+                success = False
+                while time.time() < end_time and not self.stop_flag:
+                    with conn.history_lock:
+                        new_lines = conn.history[start_idx:]
+                    if new_lines:
+                        response = "\n".join(new_lines)
+                        found_text = response.strip()
+
+                        expected = cmd.get("expected", "").strip()
+                        regex = cmd.get("regex", "").strip()
+                        negative = cmd.get("negative", "").strip()
+
+                        if regex:
+                            try:
+                                if re.search(regex, response, re.MULTILINE):
+                                    success = True
+                            except re.error as e:
+                                self.enqueue_log(f"[ERROR] Invalid regex: {e}")
+                        elif expected:
+                            if expected in response:
+                                success = True
+                        else:
+                            if response:
+                                success = True
+
+                        if negative and negative in response:
+                            success = False
+
+                        if success:
+                            final_result = "PASS"
+                            break
+                    time.sleep(0.05)
+
+                if not success:
+                    final_result = "FAIL"
+
+                if final_result == "PASS":
+                    break
+
+            # update row color + result
+            values[11] = found_text
+            values[12] = final_result
+            self.tree.item(item_id, values=values, tags=("pass" if final_result=="PASS" else "fail",))
+
+            self.enqueue_log(f"[{final_result}] {cmd['command_name']} (Retries {retries})")
+            self.results.append({"iteration": it, **cmd, "found": found_text, "result": final_result})
+
+            if not first_command_done:
+                self.frame.after(0, lambda: self.export_button.config(state="normal"))
+                first_command_done = True
+
         self.running = False
         self.frame.after(0, lambda: self.stop_button.config(state="disabled"))
-        self.frame.after(0, lambda: self.export_button.config(state="normal"))
         self.enqueue_log("[INFO] Test execution finished.")
 
     def stop(self):
