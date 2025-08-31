@@ -42,6 +42,11 @@ class RunTab:
             self.tree.column(c, width=120, stretch=True)
         self.tree.pack(fill="both", expand=True)
 
+        # Configure colors
+        self.tree.tag_configure("running", background="#fff3cd")   # yellow
+        self.tree.tag_configure("pass", background="#d4edda")      # green
+        self.tree.tag_configure("fail", background="#f8d7da")      # red
+
         # --- Live logs ---
         log_frame = ttk.LabelFrame(self.frame, text="Live Logs")
         log_frame.pack(fill="both", expand=True, pady=6)
@@ -143,6 +148,16 @@ class RunTab:
                 final_result = "FAIL"
                 found_text = ""
 
+                # Insert row as "running"
+                row_values = (
+                    it, cmd.get("command_name",""), cmd.get("command",""),
+                    cmd.get("expected",""), cmd.get("regex",""), cmd.get("negative",""),
+                    cmd.get("wait_till",""), cmd.get("print_after",""),
+                    cmd.get("print_ahead_chars",""), cmd.get("message",""),
+                    cmd.get("retries",""), "", "RUNNING"
+                )
+                item_id = self.tree.insert("", "end", values=row_values, tags=("running",))
+
                 for attempt in range(retries):
                     if self.stop_flag:
                         break
@@ -159,48 +174,61 @@ class RunTab:
                     with conn.history_lock:
                         start_idx = len(conn.history)
 
-                    # wait
                     timeout = float(cmd.get("wait_till", "1") or "1")
                     end_time = time.time() + timeout
-                    while time.time() < end_time:
-                        if self.stop_flag:
-                            break
+                    lines = []
+
+                    # loop until timeout OR PASS found
+                    while time.time() < end_time and not self.stop_flag:
+                        with conn.history_lock:
+                            new_lines = conn.history[start_idx:]
+                        if new_lines:
+                            lines = new_lines
+                            response = "\n".join(lines)
+                            found_text = response.strip()
+
+                            # --- Evaluate immediately ---
+                            expected = cmd.get("expected", "").strip()
+                            regex = cmd.get("regex", "").strip()
+                            negative = cmd.get("negative", "").strip()
+
+                            final_result = "FAIL"
+                            if regex:
+                                try:
+                                    if re.search(regex, response, re.MULTILINE):
+                                        final_result = "PASS"
+                                except re.error as e:
+                                    self.enqueue_log(f"[ERROR] Invalid regex: {e}")
+                            elif expected:
+                                if expected in response:
+                                    final_result = "PASS"
+                            else:
+                                if response:
+                                    final_result = "PASS"
+
+                            if negative and negative in response:
+                                final_result = "FAIL"
+
+                            if final_result == "PASS":
+                                break  # ✅ stop early if success
+
                         time.sleep(0.05)
 
-                    # get new lines
-                    with conn.history_lock:
-                        new_lines = conn.history[start_idx:]
-                    response = "\n".join(new_lines)
-                    found_text = response.strip()
-
-                    # evaluate
-                    expected = cmd.get("expected", "").strip()
-                    regex = cmd.get("regex", "").strip()
-                    negative = cmd.get("negative", "").strip()
-
-                    final_result = "FAIL"
-                    if regex:
-                        try:
-                            if re.search(regex, response, re.MULTILINE):
-                                final_result = "PASS"
-                        except re.error as e:
-                            self.enqueue_log(f"[ERROR] Invalid regex: {e}")
-                    elif expected:
-                        if expected in response:
-                            final_result = "PASS"
-                    else:
-                        if response:
-                            final_result = "PASS"
-
-                    if negative and negative in response:
-                        final_result = "FAIL"
-
                     if final_result == "PASS":
-                        break
+                        break  # no more retries needed
+
+                # Update row with result + color
+                new_values = (
+                    it, cmd.get("command_name",""), cmd.get("command",""),
+                    cmd.get("expected",""), cmd.get("regex",""), cmd.get("negative",""),
+                    cmd.get("wait_till",""), cmd.get("print_after",""),
+                    cmd.get("print_ahead_chars",""), cmd.get("message",""),
+                    cmd.get("retries",""), found_text, final_result
+                )
+                self.tree.item(item_id, values=new_values, tags=("pass" if final_result=="PASS" else "fail",))
 
                 self.enqueue_log(f"[{final_result}] {cmd.get('command_name','')} (Retries {retries})")
-                row = {"iteration": it, **cmd, "found": found_text, "result": final_result}
-                self.frame.after(0, lambda row=row: self._append_result_row(row))
+                self.results.append({"iteration": it, **cmd, "found": found_text, "result": final_result})
 
             if self.stop_flag:
                 break
@@ -209,24 +237,6 @@ class RunTab:
         self.frame.after(0, lambda: self.stop_button.config(state="disabled"))
         self.frame.after(0, lambda: self.export_button.config(state="normal"))
         self.enqueue_log("[INFO] Test execution finished.")
-
-    def _append_result_row(self, row):
-        self.results.append(row)
-        self.tree.insert("", "end", values=(
-            row.get("iteration",""),
-            row.get("command_name",""),
-            row.get("command",""),
-            row.get("expected",""),
-            row.get("regex",""),
-            row.get("negative",""),
-            row.get("wait_till",""),
-            row.get("print_after",""),
-            row.get("print_ahead_chars",""),
-            row.get("message",""),
-            row.get("retries",""),
-            row.get("found",""),
-            row.get("result",""),
-        ))
 
     def stop(self):
         self.stop_flag = True
