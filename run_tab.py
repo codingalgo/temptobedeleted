@@ -148,7 +148,7 @@ class RunTab:
                 final_result = "FAIL"
                 found_text = ""
 
-                # Insert row as "running"
+                # Insert row as "running" (yellow)
                 row_values = (
                     it, cmd.get("command_name",""), cmd.get("command",""),
                     cmd.get("expected",""), cmd.get("regex",""), cmd.get("negative",""),
