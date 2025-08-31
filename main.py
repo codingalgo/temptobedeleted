@@ -4,26 +4,34 @@ from connection_tab import ConnectionTab
 from editor_tab import EditorTab
 from run_tab import RunTab
 
-class TestManagerApp:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("QA Test Manager v3.0")
 
-        self.notebook = ttk.Notebook(root)
+class App(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Serial Test Tool v3.1")
+        self.geometry("1200x700")
+
+        self.notebook = ttk.Notebook(self)
         self.notebook.pack(fill="both", expand=True)
 
+        # Create tabs in correct order and wire them
         self.editor_tab = EditorTab(self.notebook)
+
+        # RunTab initially without connection_tab
         self.run_tab = RunTab(self.notebook, self.editor_tab, None)
+
+        # ConnectionTab created with reference to run_tab
         self.connection_tab = ConnectionTab(self.notebook, self.run_tab)
 
+        # Back-fill connection_tab into run_tab
+        self.run_tab.connection_tab = self.connection_tab
+
+        # Add tabs to notebook
         self.notebook.add(self.connection_tab.frame, text="Connection")
         self.notebook.add(self.editor_tab.frame, text="Editor")
         self.notebook.add(self.run_tab.frame, text="Run & Export")
 
-        # Link back run_tab to connection_tab after init
-        self.run_tab.connection_tab = self.connection_tab
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = TestManagerApp(root)
-    root.mainloop()
+    app = App()
+    app.mainloop()

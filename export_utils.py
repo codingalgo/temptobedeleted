@@ -1,5 +1,6 @@
 import datetime, webbrowser
 
+
 def export_to_html(results, filename="results.html"):
     total = len(results)
     passed = sum(1 for r in results if r.get("result") == "PASS")
@@ -15,7 +16,9 @@ def export_to_html(results, filename="results.html"):
         f.write(".pass{background:#d4edda;} .fail{background:#f8d7da;}")
         f.write(".summary{margin-bottom:20px;} .toggle{cursor:pointer;color:blue;text-decoration:underline;}")
         f.write("</style>")
-        f.write("<script>function toggle(id){var e=document.getElementById(id);e.style.display=(e.style.display=='none')?'block':'none';}</script>")
+        f.write("<script>")
+        f.write("function toggle(id){var e=document.getElementById(id);e.style.display=(e.style.display=='none')?'block':'none';}")
+        f.write("</script>")
         f.write("</head><body>")
 
         f.write("<h1>Test Results Report</h1>")

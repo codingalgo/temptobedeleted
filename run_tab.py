@@ -1,10 +1,12 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-import threading, time, re
+import threading, time, re, queue
 from export_utils import export_to_html
 
 
 class RunTab:
+    POLL_MS = 100  # ms between checking the connection_tab queue
+
     def __init__(self, notebook, editor_tab, connection_tab):
         self.frame = ttk.Frame(notebook)
         self.editor_tab = editor_tab
@@ -14,19 +16,18 @@ class RunTab:
         self.results = []
         self.iterations = tk.IntVar(value=1)
 
-        # --- Control buttons ---
+        # queue for background-to-UI logging
+        self.ui_queue = queue.Queue()
+
+        # --- Controls ---
         bf = ttk.Frame(self.frame)
         bf.pack(fill="x")
         ttk.Label(bf, text="Iterations:").pack(side="left")
         ttk.Entry(bf, textvariable=self.iterations, width=5).pack(side="left", padx=5)
         ttk.Button(bf, text="Run All", command=self.run_all).pack(side="left", padx=5)
-        self.stop_button = ttk.Button(
-            bf, text="Stop", command=self.stop, state="disabled"
-        )
+        self.stop_button = ttk.Button(bf, text="Stop", command=self.stop, state="disabled")
         self.stop_button.pack(side="left", padx=5)
-        self.export_button = ttk.Button(
-            bf, text="Export HTML", command=self.export_html, state="disabled"
-        )
+        self.export_button = ttk.Button(bf, text="Export HTML", command=self.export_html, state="disabled")
         self.export_button.pack(side="left", padx=5)
 
         # --- Results table ---
@@ -59,8 +60,11 @@ class RunTab:
         ttk.Entry(search_frame, textvariable=self.search_var, width=25).pack(side="left", padx=5)
         ttk.Button(search_frame, text="Find", command=self.search_log).pack(side="left")
 
-    # --- Logging ---
-    def log(self, msg):
+        # Start polling
+        self.frame.after(self.POLL_MS, self._poll_queues)
+
+    # --- Logging helpers ---
+    def _append_log_to_text(self, msg):
         timestamp = time.strftime("%H:%M:%S")
         line = f"[{timestamp}] {msg}\n"
         self.log_text.insert("end", line)
@@ -68,10 +72,15 @@ class RunTab:
         with open("session.log", "a", encoding="utf-8") as f:
             f.write(line)
 
+    def enqueue_log(self, msg):
+        """Safe logging from background threads."""
+        self.ui_queue.put(msg)
+
     def search_log(self):
         self.log_text.tag_remove("search", "1.0", "end")
         term = self.search_var.get()
-        if not term: return
+        if not term:
+            return
         start = self.log_text.search(term, "1.0", "end")
         if start:
             end = f"{start}+{len(term)}c"
@@ -79,10 +88,36 @@ class RunTab:
             self.log_text.tag_config("search", background="yellow")
             self.log_text.see(start)
 
+    # --- Poll queues ---
+    def _poll_queues(self):
+        # process UI log messages
+        try:
+            while True:
+                msg = self.ui_queue.get_nowait()
+                self._append_log_to_text(msg)
+        except queue.Empty:
+            pass
+
+        # process lines from connection_tab
+        if self.connection_tab and hasattr(self.connection_tab, "shared_queue"):
+            try:
+                while True:
+                    line = self.connection_tab.shared_queue.get_nowait()
+                    # add to history
+                    with self.connection_tab.history_lock:
+                        self.connection_tab.history.append(line)
+                    # show in GUI
+                    self._append_log_to_text(f"[LIVE] {line}")
+            except queue.Empty:
+                pass
+
+        self.frame.after(self.POLL_MS, self._poll_queues)
+
     # --- Execution ---
     def run_all(self):
-        if self.running: return
-        if not self.connection_tab.serial_conn or not self.connection_tab.serial_conn.is_open:
+        if self.running:
+            return
+        if not self.connection_tab or not self.connection_tab.serial_conn or not self.connection_tab.serial_conn.is_open:
             messagebox.showerror("Not Connected", "Connect to a port first.")
             return
 
@@ -98,70 +133,104 @@ class RunTab:
         threading.Thread(target=self._run_loop, daemon=True).start()
 
     def _run_loop(self):
+        conn = self.connection_tab
         for it in range(1, self.iterations.get() + 1):
-            for cmd in self.editor_tab.data:
-                if self.stop_flag: break
+            for cmd in list(self.editor_tab.data):
+                if self.stop_flag:
+                    break
 
                 retries = int(cmd.get("retries", "1") or "1")
                 final_result = "FAIL"
                 found_text = ""
 
-                for r in range(retries):
-                    if self.stop_flag: break
+                for attempt in range(retries):
+                    if self.stop_flag:
+                        break
+
                     command = cmd.get("command", "")
-                    self.log(f"[SEND] {command}")
+                    self.enqueue_log(f"[SEND] {command}")
                     try:
-                        self.connection_tab.serial_conn.write((command + "\r\n").encode())
+                        conn.serial_conn.write((command + "\r\n").encode())
                     except Exception as e:
-                        self.log(f"[ERROR] {e}")
+                        self.enqueue_log(f"[ERROR] {e}")
                         continue
 
-                    # Clear buffer and wait
-                    self.connection_tab.shared_buffer.clear()
-                    time.sleep(float(cmd.get("wait_till", "1") or "1"))
+                    # snapshot of history start
+                    with conn.history_lock:
+                        start_idx = len(conn.history)
 
-                    # Collect new lines from buffer
-                    response_lines = self.connection_tab.shared_buffer.copy()
-                    response = "\n".join(response_lines)
+                    # wait
+                    timeout = float(cmd.get("wait_till", "1") or "1")
+                    end_time = time.time() + timeout
+                    while time.time() < end_time:
+                        if self.stop_flag:
+                            break
+                        time.sleep(0.05)
+
+                    # get new lines
+                    with conn.history_lock:
+                        new_lines = conn.history[start_idx:]
+                    response = "\n".join(new_lines)
                     found_text = response.strip()
 
-                    # Evaluate
+                    # evaluate
                     expected = cmd.get("expected", "").strip()
                     regex = cmd.get("regex", "").strip()
                     negative = cmd.get("negative", "").strip()
 
                     final_result = "FAIL"
                     if regex:
-                        if re.search(regex, response): final_result = "PASS"
+                        try:
+                            if re.search(regex, response, re.MULTILINE):
+                                final_result = "PASS"
+                        except re.error as e:
+                            self.enqueue_log(f"[ERROR] Invalid regex: {e}")
                     elif expected:
-                        if expected in response: final_result = "PASS"
+                        if expected in response:
+                            final_result = "PASS"
                     else:
-                        if response: final_result = "PASS"
+                        if response:
+                            final_result = "PASS"
 
                     if negative and negative in response:
                         final_result = "FAIL"
 
-                    if final_result == "PASS": break
+                    if final_result == "PASS":
+                        break
 
-                self.log(f"[{final_result}] {cmd.get('command_name','')} (Retries {retries})")
-                self.results.append({"iteration": it, **cmd, "found": found_text, "result": final_result})
-                self.tree.insert("", "end", values=(
-                    it, cmd.get("command_name",""), cmd.get("command",""),
-                    cmd.get("expected",""), cmd.get("regex",""), cmd.get("negative",""),
-                    cmd.get("wait_till",""), cmd.get("print_after",""),
-                    cmd.get("print_ahead_chars",""), cmd.get("message",""),
-                    cmd.get("retries",""), found_text, final_result
-                ))
+                self.enqueue_log(f"[{final_result}] {cmd.get('command_name','')} (Retries {retries})")
+                row = {"iteration": it, **cmd, "found": found_text, "result": final_result}
+                self.frame.after(0, lambda row=row: self._append_result_row(row))
 
-            if self.stop_flag: break
+            if self.stop_flag:
+                break
 
         self.running = False
-        self.stop_button["state"] = "disabled"
-        self.export_button["state"] = "normal"
+        self.frame.after(0, lambda: self.stop_button.config(state="disabled"))
+        self.frame.after(0, lambda: self.export_button.config(state="normal"))
+        self.enqueue_log("[INFO] Test execution finished.")
+
+    def _append_result_row(self, row):
+        self.results.append(row)
+        self.tree.insert("", "end", values=(
+            row.get("iteration",""),
+            row.get("command_name",""),
+            row.get("command",""),
+            row.get("expected",""),
+            row.get("regex",""),
+            row.get("negative",""),
+            row.get("wait_till",""),
+            row.get("print_after",""),
+            row.get("print_ahead_chars",""),
+            row.get("message",""),
+            row.get("retries",""),
+            row.get("found",""),
+            row.get("result",""),
+        ))
 
     def stop(self):
         self.stop_flag = True
-        self.log("[STOP] Execution stopped by user.")
+        self.enqueue_log("[STOP] Execution stopped by user.")
 
     def export_html(self):
         if not self.results:

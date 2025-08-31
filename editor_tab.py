@@ -2,23 +2,28 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import json
 
+# All fields required (snake_case)
 REQUIRED_COLS = (
-    "command_name","command","expected","regex","negative",
-    "wait_till","print_after","print_ahead_chars","message","retries"
+    "command_name", "command", "expected", "regex", "negative",
+    "wait_till", "print_after", "print_ahead_chars", "message", "retries"
 )
+
 
 class EditorTab:
     def __init__(self, notebook):
         self.frame = ttk.Frame(notebook)
         self.data = []
 
-        bf = ttk.Frame(self.frame); bf.pack(fill="x")
+        # --- Buttons ---
+        bf = ttk.Frame(self.frame)
+        bf.pack(fill="x")
         ttk.Button(bf, text="Load JSON", command=self.load_json).pack(side="left", padx=5, pady=5)
         ttk.Button(bf, text="Save JSON", command=self.save_json).pack(side="left", padx=5, pady=5)
         ttk.Button(bf, text="Add Command", command=self.add_command).pack(side="left", padx=5, pady=5)
         ttk.Button(bf, text="Duplicate", command=self.duplicate_row).pack(side="left", padx=5, pady=5)
         ttk.Button(bf, text="Delete", command=self.delete_row).pack(side="left", padx=5, pady=5)
 
+        # --- Table ---
         self.tree = ttk.Treeview(self.frame, columns=REQUIRED_COLS, show="headings", selectmode="browse")
         for col in REQUIRED_COLS:
             self.tree.heading(col, text=col)
@@ -29,12 +34,13 @@ class EditorTab:
         self.tree.bind("<B1-Motion>", self.drag)
         self.tree.bind("<ButtonRelease-1>", self.drop)
 
+        # --- Edit section ---
         self.edit_frame = ttk.LabelFrame(self.frame, text="Edit Command")
         self.edit_frame.pack(fill="x", pady=6)
 
         self.edit_vars = {col: tk.StringVar() for col in REQUIRED_COLS}
         for i, col in enumerate(REQUIRED_COLS):
-            r, c = divmod(i, 4)
+            r, c = divmod(i, 4)  # 4 columns per row
             ttk.Label(self.edit_frame, text=col).grid(row=r, column=c*2, padx=5, pady=4, sticky="e")
             ttk.Entry(self.edit_frame, textvariable=self.edit_vars[col], width=18).grid(row=r, column=c*2+1, padx=5, pady=4, sticky="w")
 
@@ -43,74 +49,110 @@ class EditorTab:
 
         self.dragging_index = None
 
+    # --- File operations ---
     def load_json(self):
         file_path = filedialog.askopenfilename(filetypes=[("JSON files","*.json")])
-        if not file_path: return
+        if not file_path:
+            return
         try:
-            with open(file_path, "r", encoding="utf-8") as f: data = json.load(f)
-            if not isinstance(data, list): raise ValueError("JSON root must be a list of objects.")
-            fixed=[]
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, list):
+                raise ValueError("JSON root must be a list of objects.")
+            fixed = []
             for item in data:
-                row={k:"" for k in REQUIRED_COLS}
+                row = {k: "" for k in REQUIRED_COLS}
                 if isinstance(item, dict):
                     for k in REQUIRED_COLS:
-                        if k in item: row[k]=str(item[k])
+                        if k in item:
+                            row[k] = str(item[k])
                 fixed.append(row)
-            self.data=fixed
+            self.data = fixed
             self.refresh_table()
             messagebox.showinfo("Loaded", f"Loaded {len(self.data)} commands.")
         except Exception as e:
             messagebox.showerror("Load Failed", f"Could not load JSON: {e}")
 
     def save_json(self):
-        file_path=filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON files","*.json")])
-        if not file_path:return
-        with open(file_path,"w",encoding="utf-8") as f: json.dump(self.data,f,indent=2)
+        file_path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON files","*.json")])
+        if not file_path:
+            return
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(self.data, f, indent=2)
         messagebox.showinfo("Saved", f"Commands saved to {file_path}")
 
+    # --- Row operations ---
     def add_command(self):
         self.data.append({
-            "command_name":"New Command","command":"","expected":"","regex":"","negative":"",
-            "wait_till":"1","print_after":"0","print_ahead_chars":"0","message":"","retries":"1"
-        }); self.refresh_table()
+            "command_name": "New Command",
+            "command": "",
+            "expected": "",
+            "regex": "",
+            "negative": "",
+            "wait_till": "1",
+            "print_after": "0",
+            "print_ahead_chars": "0",
+            "message": "",
+            "retries": "1"
+        })
+        self.refresh_table()
 
     def duplicate_row(self):
-        sel=self.tree.selection(); 
-        if not sel:return
-        idx=self.tree.index(sel[0]); self.data.insert(idx+1, dict(self.data[idx])); self.refresh_table()
+        sel = self.tree.selection()
+        if not sel:
+            return
+        idx = self.tree.index(sel[0])
+        self.data.insert(idx+1, dict(self.data[idx]))
+        self.refresh_table()
 
     def delete_row(self):
-        sel=self.tree.selection(); 
-        if not sel:return
-        idx=self.tree.index(sel[0]); del self.data[idx]; self.refresh_table()
+        sel = self.tree.selection()
+        if not sel:
+            return
+        idx = self.tree.index(sel[0])
+        del self.data[idx]
+        self.refresh_table()
 
-    def on_row_select(self,_):
-        sel=self.tree.selection(); 
-        if not sel:return
-        idx=self.tree.index(sel[0]); cmd=self.data[idx]
-        for k,v in self.edit_vars.items(): v.set(cmd.get(k,""))
-        self.save_edit_btn["state"]="normal"
+    # --- Editing ---
+    def on_row_select(self, _):
+        sel = self.tree.selection()
+        if not sel:
+            return
+        idx = self.tree.index(sel[0])
+        cmd = self.data[idx]
+        for k, v in self.edit_vars.items():
+            v.set(cmd.get(k, ""))
+        self.save_edit_btn["state"] = "normal"
 
     def save_edit(self):
-        sel=self.tree.selection(); 
-        if not sel:return
-        idx=self.tree.index(sel[0])
-        for k,v in self.edit_vars.items(): self.data[idx][k]=v.get()
-        self.refresh_table(); self.save_edit_btn["state"]="disabled"
+        sel = self.tree.selection()
+        if not sel:
+            return
+        idx = self.tree.index(sel[0])
+        for k, v in self.edit_vars.items():
+            self.data[idx][k] = v.get()
+        self.refresh_table()
+        self.save_edit_btn["state"] = "disabled"
 
     def refresh_table(self):
-        for r in self.tree.get_children(): self.tree.delete(r)
-        for cmd in self.data: self.tree.insert("", "end", values=[cmd.get(c,"") for c in REQUIRED_COLS])
+        for r in self.tree.get_children():
+            self.tree.delete(r)
+        for cmd in self.data:
+            self.tree.insert("", "end", values=[cmd.get(c, "") for c in REQUIRED_COLS])
 
+    # --- Drag & drop ---
     def drag(self, event):
-        row=self.tree.identify_row(event.y); 
-        if row: self.dragging_index=self.tree.index(row)
+        row = self.tree.identify_row(event.y)
+        if row:
+            self.dragging_index = self.tree.index(row)
 
     def drop(self, event):
-        if self.dragging_index is None:return
-        row=self.tree.identify_row(event.y)
+        if self.dragging_index is None:
+            return
+        row = self.tree.identify_row(event.y)
         if row:
-            new=self.tree.index(row)
-            if new!=self.dragging_index:
-                self.data.insert(new, self.data.pop(self.dragging_index)); self.refresh_table()
-        self.dragging_index=None
+            new = self.tree.index(row)
+            if new != self.dragging_index:
+                self.data.insert(new, self.data.pop(self.dragging_index))
+                self.refresh_table()
+        self.dragging_index = None

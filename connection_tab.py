@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
+import queue
 
 try:
     import serial
@@ -14,10 +15,16 @@ class ConnectionTab:
         self.frame = ttk.Frame(notebook)
         self.serial_conn = None
         self.run_tab_ref = run_tab_ref
+
+        # Shared queues/buffers
+        self.shared_queue = queue.Queue()   # used to pass lines to RunTab
+        self.history = []                   # complete list of received lines
+        self.history_lock = threading.Lock()
+
         self.reader_thread = None
         self.stop_reader = False
-        self.shared_buffer = []  # <--- NEW: buffer for RunTab to read responses
 
+        # --- UI elements ---
         ttk.Label(self.frame, text="Select Port:").pack(pady=5)
 
         self.port_var = tk.StringVar()
@@ -66,7 +73,8 @@ class ConnectionTab:
             )
             self.connect_button["state"] = "disabled"
             self.disconnect_button["state"] = "normal"
-            # Start live reader
+
+            # Start background reader
             self.stop_reader = False
             self.reader_thread = threading.Thread(
                 target=self._reader_loop, daemon=True
@@ -77,19 +85,35 @@ class ConnectionTab:
             messagebox.showerror("Connection Failed", str(e))
 
     def _reader_loop(self):
+        """
+        This thread is the ONLY reader of the serial port.
+        It pushes every line into shared_queue and logs to RunTab.
+        """
         while not self.stop_reader and self.serial_conn and self.serial_conn.is_open:
             try:
-                line = self.serial_conn.readline().decode(errors="ignore").strip()
+                raw = self.serial_conn.readline()
+                if not raw:
+                    continue
+                try:
+                    line = raw.decode(errors="ignore").rstrip("\r\n")
+                except Exception:
+                    line = str(raw)
                 if line:
-                    # Log live output
-                    self.run_tab_ref.log(f"[LIVE] {line}")
-                    # Save into buffer for RunTab evaluation
-                    self.shared_buffer.append(line)
+                    # Save in history
+                    with self.history_lock:
+                        self.history.append(line)
+                    # Push into queue for RunTab polling
+                    self.shared_queue.put(line)
             except Exception:
-                pass
+                continue
 
     def disconnect(self):
         self.stop_reader = True
+        if self.reader_thread and self.reader_thread.is_alive():
+            try:
+                self.reader_thread.join(timeout=0.2)
+            except Exception:
+                pass
         if self.serial_conn and self.serial_conn.is_open:
             try:
                 self.serial_conn.close()
