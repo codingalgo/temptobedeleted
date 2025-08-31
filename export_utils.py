@@ -1,12 +1,17 @@
 import os
 import datetime
 import html
+import tkinter.messagebox as messagebox
 
 def export_to_html(results, filename="results.html"):
     """
     Export test results to a styled HTML file with icons, colors, 
     print_ahead snippet, and expandable logs.
     """
+
+    if not results:
+        messagebox.showerror("No Results", "No results to export.")
+        return None
 
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -31,8 +36,8 @@ def export_to_html(results, filename="results.html"):
 
     # Summary counts
     total = len(results)
-    passed = sum(1 for r in results if r["result"] == "PASS")
-    failed = sum(1 for r in results if r["result"] == "FAIL")
+    passed = sum(1 for r in results if r.get("result") == "PASS")
+    failed = sum(1 for r in results if r.get("result") == "FAIL")
     summary_html = f"""
     <h2>Summary</h2>
     <p>Total: {total} | ✅ Pass: {passed} | ❌ Fail: {failed}</p>
@@ -41,9 +46,10 @@ def export_to_html(results, filename="results.html"):
     # Build rows
     rows = ""
     for r in results:
-        cls = r["result"].lower()
-        icon = {"PASS": "✅", "FAIL": "❌", "RUNNING": "⏳", "PENDING": "➖"}.get(r["result"], "")
-        
+        res = r.get("result", "")
+        cls = res.lower()
+        icon = {"PASS": "✅", "FAIL": "❌", "RUNNING": "⏳", "PENDING": "➖"}.get(res, "")
+
         # Extract print_ahead snippet
         snippet = ""
         found_text = r.get("found", "") or ""
@@ -54,12 +60,12 @@ def export_to_html(results, filename="results.html"):
             end = idx + len(ahead) + 40
             snippet = html.escape(found_text[start:end])
         elif ahead:
-            snippet = f"(Not found: {ahead})"
+            snippet = f"(Not found: {html.escape(ahead)})"
         else:
             snippet = "(N/A)"
 
         # Escape values for HTML
-        values = {k: html.escape(str(v)) for k,v in r.items()}
+        values = {k: html.escape(str(v)) for k, v in r.items()}
 
         rows += f"""
         <tr class="{cls}">
@@ -76,7 +82,7 @@ def export_to_html(results, filename="results.html"):
             <td>{values.get("retries","")}</td>
             <td><pre>{html.escape(found_text)}</pre></td>
             <td><pre>{snippet}</pre></td>
-            <td class="icon">{icon} {values.get("result","")}</td>
+            <td class="icon">{icon} {res}</td>
         </tr>
         <tr><td colspan="14">
             <details><summary>View Full Logs</summary>
@@ -123,4 +129,5 @@ def export_to_html(results, filename="results.html"):
     with open(filename, "w", encoding="utf-8") as f:
         f.write(html_content)
 
+    messagebox.showinfo("Export Complete", f"Results exported to {os.path.abspath(filename)}")
     return filename
