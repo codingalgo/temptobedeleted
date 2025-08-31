@@ -140,9 +140,13 @@ class RunTab:
     def _run_loop(self):
         conn = self.connection_tab
         for it in range(1, self.iterations.get() + 1):
+            self.enqueue_log(f"[DEBUG] Starting iteration {it}, {len(self.editor_tab.data)} commands to run")
+
             for cmd in list(self.editor_tab.data):
                 if self.stop_flag:
                     break
+
+                self.enqueue_log(f"[DEBUG] Starting command: {cmd.get('command_name','')} ({cmd.get('command','')})")
 
                 retries = int(cmd.get("retries", "1") or "1")
                 final_result = "FAIL"
@@ -243,8 +247,10 @@ class RunTab:
                 self.tree.item(item_id, values=new_values, tags=("pass" if final_result=="PASS" else "fail",))
 
                 self.enqueue_log(f"[{final_result}] {cmd.get('command_name','')} (Retries {retries})")
+                self.enqueue_log(f"[DEBUG] Finished command: {cmd.get('command_name','')} → {final_result}")
                 self.results.append({"iteration": it, **cmd, "found": found_text, "result": final_result})
 
+            self.enqueue_log(f"[DEBUG] Completed iteration {it}")
             if self.stop_flag:
                 break
 
