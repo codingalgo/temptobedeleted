@@ -1,35 +1,38 @@
 [
   {
-    "Command Name": "Ping",
-    "Command": "AT",
-    "Expected": "",
-    "Negative": "",
-    "Wait Till": "1",
-    "Print After": "30",
-    "Print Ahead Chars": "20",
-    "Message": "Basic attention check",
-    "Regex": "OK"
+    "command_name": "Ping",
+    "command": "AT",
+    "expected": "",
+    "regex": "OK",
+    "negative": "",
+    "wait_till": "1",
+    "print_after": "30",
+    "print_ahead_chars": "20",
+    "message": "Basic attention check",
+    "retries": "1"
   },
   {
-    "Command Name": "Device Info",
-    "Command": "ATI",
-    "Expected": "OK",
-    "Negative": "",
-    "Wait Till": "2",
-    "Print After": "50",
-    "Print Ahead Chars": "30",
-    "Message": "Read modem information",
-    "Regex": ""
+    "command_name": "Device Info",
+    "command": "ATI",
+    "expected": "OK",
+    "regex": "",
+    "negative": "",
+    "wait_till": "2",
+    "print_after": "50",
+    "print_ahead_chars": "30",
+    "message": "Read modem information",
+    "retries": "2"
   },
   {
-    "Command Name": "Network Reg",
-    "Command": "AT+CREG?",
-    "Expected": "",
-    "Negative": "ERROR",
-    "Wait Till": "2",
-    "Print After": "50",
-    "Print Ahead Chars": "30",
-    "Message": "Check network registration",
-    "Regex": "\\+CREG: [0-9],[0-9]"
+    "command_name": "Network Reg",
+    "command": "AT+CREG?",
+    "expected": "",
+    "regex": "\\+CREG: [0-9],[0-9]",
+    "negative": "ERROR",
+    "wait_till": "2",
+    "print_after": "50",
+    "print_ahead_chars": "30",
+    "message": "Check network registration",
+    "retries": "3"
   }
 ]
