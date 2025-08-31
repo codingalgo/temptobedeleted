@@ -1,12 +1,14 @@
 import os
 import datetime
 import html
+import webbrowser
 import tkinter.messagebox as messagebox
 
 def export_to_html(results, filename="results.html"):
     """
     Export test results to a styled HTML file with icons, colors,
     print_ahead snippet, and expandable logs.
+    After saving, ask user if they want to open the report.
     """
 
     if not results:
@@ -149,8 +151,15 @@ def export_to_html(results, filename="results.html"):
     </html>
     """
 
+    # Save file
     with open(filename, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    messagebox.showinfo("Export Complete", f"Results exported to {os.path.abspath(filename)}")
+    abs_path = os.path.abspath(filename)
+    messagebox.showinfo("Export Complete", f"Results exported to {abs_path}")
+
+    # Ask user if they want to open it
+    if messagebox.askyesno("Open Report", "Do you want to open the HTML report now?"):
+        webbrowser.open(f"file://{abs_path}")
+
     return filename
