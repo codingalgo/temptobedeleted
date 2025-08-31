@@ -34,6 +34,15 @@ class ConnectionTab:
         self._refresh_ports()
         self.port_dropdown.pack(pady=5)
 
+        # Baudrate selector
+        ttk.Label(self.frame, text="Baudrate:").pack(pady=5)
+        self.baud_var = tk.StringVar(value="115200")
+        self.baud_dropdown = ttk.Combobox(
+            self.frame, textvariable=self.baud_var, width=12, state="readonly",
+            values=["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"]
+        )
+        self.baud_dropdown.pack(pady=5)
+
         self.connect_button = ttk.Button(
             self.frame, text="Connect", command=self.connect
         )
@@ -67,9 +76,10 @@ class ConnectionTab:
             messagebox.showerror("No Ports", "No serial ports detected.")
             return
         try:
-            self.serial_conn = serial.Serial(selected, baudrate=9600, timeout=1)
+            baud = int(self.baud_var.get())
+            self.serial_conn = serial.Serial(selected, baudrate=baud, timeout=1)
             self.status_label.config(
-                text=f"Status: Connected to {selected}", foreground="green"
+                text=f"Status: Connected to {selected} @ {baud}", foreground="green"
             )
             self.connect_button["state"] = "disabled"
             self.disconnect_button["state"] = "normal"
