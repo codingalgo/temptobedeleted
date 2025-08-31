@@ -5,7 +5,7 @@ import tkinter.messagebox as messagebox
 
 def export_to_html(results, filename="results.html"):
     """
-    Export test results to a styled HTML file with icons, colors, 
+    Export test results to a styled HTML file with icons, colors,
     print_ahead snippet, and expandable logs.
     """
 
@@ -50,18 +50,41 @@ def export_to_html(results, filename="results.html"):
         cls = res.lower()
         icon = {"PASS": "✅", "FAIL": "❌", "RUNNING": "⏳", "PENDING": "➖"}.get(res, "")
 
-        # Extract print_ahead snippet
-        snippet = ""
         found_text = r.get("found", "") or ""
+        after = r.get("print_after", "").strip()
         ahead = r.get("print_ahead_chars", "").strip()
-        if ahead and ahead in found_text:
-            idx = found_text.find(ahead)
-            start = max(0, idx - 40)
-            end = idx + len(ahead) + 40
-            snippet = html.escape(found_text[start:end])
-        elif ahead:
-            snippet = f"(Not found: {html.escape(ahead)})"
-        else:
+        snippet = ""
+        found_snippet = ""
+
+        try:
+            # Determine how many characters to capture
+            n = int(r.get("n_chars", "50") or "50")  # Default 50 if not given
+
+            # Snippet for Found column
+            if after and after in found_text:
+                idx = found_text.find(after) + len(after)
+                found_snippet = found_text[idx: idx + n]
+            elif ahead and ahead in found_text:
+                idx = found_text.find(ahead)
+                found_snippet = found_text[max(0, idx - n): idx + len(ahead) + n]
+            else:
+                found_snippet = found_text[:n]
+
+            found_snippet = html.escape(found_snippet)
+
+            # Print Ahead snippet (separate column)
+            if ahead and ahead in found_text:
+                idx = found_text.find(ahead)
+                start = max(0, idx - 40)
+                end = idx + len(ahead) + 40
+                snippet = html.escape(found_text[start:end])
+            elif ahead:
+                snippet = f"(Not found: {html.escape(ahead)})"
+            else:
+                snippet = "(N/A)"
+
+        except Exception:
+            found_snippet = "(N/A)"
             snippet = "(N/A)"
 
         # Escape values for HTML
@@ -80,7 +103,7 @@ def export_to_html(results, filename="results.html"):
             <td>{values.get("print_ahead_chars","")}</td>
             <td>{values.get("message","")}</td>
             <td>{values.get("retries","")}</td>
-            <td><pre>{html.escape(found_text)}</pre></td>
+            <td><pre>{found_snippet}</pre></td>
             <td><pre>{snippet}</pre></td>
             <td class="icon">{icon} {res}</td>
         </tr>
@@ -116,7 +139,7 @@ def export_to_html(results, filename="results.html"):
                 <th>Print Ahead</th>
                 <th>Message</th>
                 <th>Retries</th>
-                <th>Found</th>
+                <th>Found (substring)</th>
                 <th>Print Ahead Snippet</th>
                 <th>Result</th>
             </tr>
