@@ -31,19 +31,9 @@ class RunTab:
 
         # --- Results table ---
         cols = (
-            "iteration",
-            "command_name",
-            "command",
-            "expected",
-            "regex",
-            "negative",
-            "wait_till",
-            "print_after",
-            "print_ahead_chars",
-            "message",
-            "retries",
-            "found",
-            "result",
+            "iteration","command_name","command","expected","regex","negative",
+            "wait_till","print_after","print_ahead_chars","message","retries",
+            "found","result"
         )
         self.tree = ttk.Treeview(self.frame, columns=cols, show="headings")
         for c in cols:
@@ -66,12 +56,8 @@ class RunTab:
         search_frame = ttk.Frame(self.frame)
         search_frame.pack(fill="x")
         self.search_var = tk.StringVar()
-        ttk.Entry(search_frame, textvariable=self.search_var, width=25).pack(
-            side="left", padx=5
-        )
-        ttk.Button(search_frame, text="Find", command=self.search_log).pack(
-            side="left"
-        )
+        ttk.Entry(search_frame, textvariable=self.search_var, width=25).pack(side="left", padx=5)
+        ttk.Button(search_frame, text="Find", command=self.search_log).pack(side="left")
 
     # --- Logging ---
     def log(self, msg):
@@ -85,8 +71,7 @@ class RunTab:
     def search_log(self):
         self.log_text.tag_remove("search", "1.0", "end")
         term = self.search_var.get()
-        if not term:
-            return
+        if not term: return
         start = self.log_text.search(term, "1.0", "end")
         if start:
             end = f"{start}+{len(term)}c"
@@ -96,8 +81,7 @@ class RunTab:
 
     # --- Execution ---
     def run_all(self):
-        if self.running:
-            return
+        if self.running: return
         if not self.connection_tab.serial_conn or not self.connection_tab.serial_conn.is_open:
             messagebox.showerror("Not Connected", "Connect to a port first.")
             return
@@ -116,97 +100,60 @@ class RunTab:
     def _run_loop(self):
         for it in range(1, self.iterations.get() + 1):
             for cmd in self.editor_tab.data:
-                if self.stop_flag:
-                    break
+                if self.stop_flag: break
 
                 retries = int(cmd.get("retries", "1") or "1")
                 final_result = "FAIL"
                 found_text = ""
 
                 for r in range(retries):
-                    if self.stop_flag:
-                        break
+                    if self.stop_flag: break
                     command = cmd.get("command", "")
                     self.log(f"[SEND] {command}")
                     try:
-                        self.connection_tab.serial_conn.write(
-                            (command + "\r\n").encode()
-                        )
+                        self.connection_tab.serial_conn.write((command + "\r\n").encode())
                     except Exception as e:
                         self.log(f"[ERROR] {e}")
                         continue
 
-                    # --- FIX: Read until timeout ---
-                    timeout = float(cmd.get("wait_till", "1") or "1")
-                    end_time = time.time() + timeout
-                    lines = []
-                    while time.time() < end_time:
-                        try:
-                            chunk = self.connection_tab.serial_conn.readline().decode(errors="ignore").strip()
-                            if chunk:
-                                lines.append(chunk)
-                                self.log(f"[RECV] {chunk}")
-                        except Exception:
-                            break
-                    response = "\n".join(lines)
+                    # Clear buffer and wait
+                    self.connection_tab.shared_buffer.clear()
+                    time.sleep(float(cmd.get("wait_till", "1") or "1"))
+
+                    # Collect new lines from buffer
+                    response_lines = self.connection_tab.shared_buffer.copy()
+                    response = "\n".join(response_lines)
                     found_text = response.strip()
 
-                    # Evaluation
+                    # Evaluate
                     expected = cmd.get("expected", "").strip()
                     regex = cmd.get("regex", "").strip()
                     negative = cmd.get("negative", "").strip()
 
-                    final_result = "FAIL"  # default
+                    final_result = "FAIL"
                     if regex:
-                        if re.search(regex, response):
-                            final_result = "PASS"
+                        if re.search(regex, response): final_result = "PASS"
                     elif expected:
-                        if expected in response:
-                            final_result = "PASS"
+                        if expected in response: final_result = "PASS"
                     else:
-                        # if nothing to check, consider pass
-                        if response:
-                            final_result = "PASS"
+                        if response: final_result = "PASS"
 
                     if negative and negative in response:
                         final_result = "FAIL"
 
-                    if final_result == "PASS":
-                        break  # no need more retries
+                    if final_result == "PASS": break
 
-                self.log(
-                    f"[{final_result}] {cmd.get('command_name','')} (Retries {retries})"
-                )
-                self.results.append(
-                    {
-                        "iteration": it,
-                        **cmd,
-                        "found": found_text,
-                        "result": final_result,
-                    }
-                )
-                self.tree.insert(
-                    "",
-                    "end",
-                    values=(
-                        it,
-                        cmd.get("command_name", ""),
-                        cmd.get("command", ""),
-                        cmd.get("expected", ""),
-                        cmd.get("regex", ""),
-                        cmd.get("negative", ""),
-                        cmd.get("wait_till", ""),
-                        cmd.get("print_after", ""),
-                        cmd.get("print_ahead_chars", ""),
-                        cmd.get("message", ""),
-                        cmd.get("retries", ""),
-                        found_text,
-                        final_result,
-                    ),
-                )
+                self.log(f"[{final_result}] {cmd.get('command_name','')} (Retries {retries})")
+                self.results.append({"iteration": it, **cmd, "found": found_text, "result": final_result})
+                self.tree.insert("", "end", values=(
+                    it, cmd.get("command_name",""), cmd.get("command",""),
+                    cmd.get("expected",""), cmd.get("regex",""), cmd.get("negative",""),
+                    cmd.get("wait_till",""), cmd.get("print_after",""),
+                    cmd.get("print_ahead_chars",""), cmd.get("message",""),
+                    cmd.get("retries",""), found_text, final_result
+                ))
 
-            if self.stop_flag:
-                break
+            if self.stop_flag: break
 
         self.running = False
         self.stop_button["state"] = "disabled"
