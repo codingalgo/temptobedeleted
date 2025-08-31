@@ -158,6 +158,7 @@ class RunTab:
                 )
                 item_id = self.tree.insert("", "end", values=row_values, tags=("running",))
 
+                # try sending/retrying
                 for attempt in range(retries):
                     if self.stop_flag:
                         break
@@ -170,7 +171,7 @@ class RunTab:
                         self.enqueue_log(f"[ERROR] {e}")
                         continue
 
-                    # snapshot of history start
+                    # fresh snapshot
                     with conn.history_lock:
                         start_idx = len(conn.history)
 
@@ -178,7 +179,6 @@ class RunTab:
                     end_time = time.time() + timeout
                     lines = []
 
-                    # loop until timeout OR PASS found
                     while time.time() < end_time and not self.stop_flag:
                         with conn.history_lock:
                             new_lines = conn.history[start_idx:]
@@ -187,7 +187,7 @@ class RunTab:
                             response = "\n".join(lines)
                             found_text = response.strip()
 
-                            # --- Evaluate immediately ---
+                            # evaluate
                             expected = cmd.get("expected", "").strip()
                             regex = cmd.get("regex", "").strip()
                             negative = cmd.get("negative", "").strip()
@@ -210,14 +210,14 @@ class RunTab:
                                 final_result = "FAIL"
 
                             if final_result == "PASS":
-                                break  # ✅ stop early if success
+                                break  # ✅ stop early
 
                         time.sleep(0.05)
 
                     if final_result == "PASS":
-                        break  # no more retries needed
+                        break  # stop retrying
 
-                # Update row with result + color
+                # Update row color + found message
                 new_values = (
                     it, cmd.get("command_name",""), cmd.get("command",""),
                     cmd.get("expected",""), cmd.get("regex",""), cmd.get("negative",""),
